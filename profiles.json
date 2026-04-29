@@ -1,0 +1,5 @@
+{
+  "track1": { "device": 18, "engine": "online", "voice": "female_en" },
+  "track2": { "device": 18,  "engine": "online", "voice": "male_en" },
+  "track3": { "device": 18,  "engine": "offline",  "voice": "female_en" }
+}

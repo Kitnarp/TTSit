@@ -1,0 +1,4 @@
+1: server -> ProfileManager -> TTSFactory -> TTSOnline/TTSOffline -> audio_player
+
+2: send_tts.py sends to server
+
