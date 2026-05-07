@@ -1,74 +1,110 @@
-# Core/TTSOffline.py
-from core.TTSBase import TTSBase
-import pyttsx3
-import multiprocessing
-import sounddevice as sd
-import soundfile as sf
-import tempfile
 import os
+import pyttsx3
+import threading
+import tempfile
+import soundfile as sf
+import queue
+import time
+from core.TTSBase import TTSBase
 
-def _speak_worker(text, voice_id, device):
-    # Generate speech to a temp WAV file
-    tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    tmpfile.close()
+class TTSOffline(TTSBase):
+    def __init__(self, player, default_voice="female_en"):
+        super().__init__()
+        self.player = player
+        self.VOICE_MAP = {"female_en": "Zira", "male_en": "David"}
+        self.default_voice = default_voice
+        
+        # Voice Cache
+        print("[TTSOffline] Initializing voice cache...")
+        self._voice_id_cache = {}
+        self._init_voice_cache()
+        
+        # Dedicated Worker for pyttsx3 to keep COM objects stable
+        self._request_queue = queue.Queue()
+        self._worker_thread = threading.Thread(target=self._offline_worker, daemon=True)
+        self._worker_thread.start()
+        print(f"[TTSOffline] Background worker started. Default voice: {self.default_voice}")
 
-    engine = pyttsx3.init()
-    if voice_id:
-        engine.setProperty("voice", voice_id)
-    engine.save_to_file(text, tmpfile.name)
-    engine.runAndWait()
+    def _init_voice_cache(self):
+        try:
+            engine = pyttsx3.init()
+            voices = engine.getProperty("voices")
+            for key, name_match in self.VOICE_MAP.items():
+                for v in voices:
+                    if name_match.lower() in v.name.lower():
+                        self._voice_id_cache[key] = v.id
+                        print(f"[TTSOffline] Cached voice: {key} -> {v.name}")
+                        break
+            engine.stop()
+        except Exception as e:
+            print(f"[TTSOffline] Error during voice cache initialization: {e}")
 
-    # Play WAV on chosen device
-    data, samplerate = sf.read(tmpfile.name, dtype='int16')
-    sd.play(data, samplerate=samplerate, device=device)
-    sd.wait()
+    def _offline_worker(self):
+        """Refactored worker that re-initializes the engine for every call."""
+        print("[TTSOffline] Worker thread is ready.")
+        
+        while True:
+            text, voice_id = self._request_queue.get()
+            print(f"[TTSOffline] Processing: \"{text[:40]}...\"")
+            
+            temp_path = None
+            try:
+                # 1. Initialize engine FRESH for this specific request
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 170)
+                if voice_id:
+                    engine.setProperty("voice", voice_id)
 
-    os.remove(tmpfile.name)
-    print(f"[OfflineTTS] Played on device {device}: {text}")
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                    temp_path = tmp.name
 
-class TTSOffline(TTSBase): 
-    VOICE_MAP = {
-        "female_en": "Microsoft Zira Desktop",
-        "male_en": "Microsoft David Desktop",
-    }
+                # 2. Synthesis
+                engine.save_to_file(text, temp_path)
+                engine.runAndWait() 
+                
+                # 3. CRITICAL: Stop and delete the engine to release COM resources
+                engine.stop()
+                del engine 
 
-    def __init__(self, default_voice=None, device=None):
-        if default_voice in self.VOICE_MAP:
-            self.default_voice = default_voice
-        else:
-            self.default_voice = "female_en"
-        self._process = None
-        self.device = device
+                # Playback logic remains the same
+                if not self.player._stop_event.is_set() and os.path.exists(temp_path):
+                    data, samplerate = sf.read(temp_path, dtype='int16')
+                    self.player.play_numpy(data, samplerate)
 
-    def set_output_device(self, device):
-        """Set output device by index or name (from sd.query_devices())."""
-        self.device = device
+            except Exception as e:
+                print(f"[TTSOffline] Worker Error: {e}")
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    try: os.remove(temp_path)
+                    except: pass
+                self._request_queue.task_done()
 
-    def _resolve_voice(self, voice_key: str):
-        target_voice = self.VOICE_MAP.get(voice_key)
-        print("Resolved voice: ", target_voice)
-        engine = pyttsx3.init()
-        for v in engine.getProperty("voices"):
-            if target_voice and target_voice in v.name:
-                return v.id
-        return None
 
-    def speak(self, text: str, voice: str = None):
-        voice_key = voice or self.default_voice
-        voice_id = self._resolve_voice(voice_key)
+    def speak(self, text, voice=None):
+        """Queues the request for the worker thread."""
+        if not text:
+            print("[TTSOffline] Empty text received. Skipping.")
+            return
 
-        # Kill any previous process
-        if self._process and self._process.is_alive():
-            self.stop()
+        # 1. Stop current audio
+        self.stop()
+        
+        # 2. Resolve voice
+        voice_id = self._voice_id_cache.get(voice)
+        if not voice_id:
+            voice_id = self._voice_id_cache.get(self.default_voice)
+            if voice: # Only print if they actually requested a specific voice that failed
+                print(f"[TTSOffline] Voice '{voice}' not found, using default.")
 
-        self._process = multiprocessing.Process(
-            target=_speak_worker, args=(text, voice_id, self.device)
-        )
-        self._process.start()
-        print(f"[OfflineTTS] Speaking with voice {voice_key} on device {self.device}")
+        # 3. Queue request
+        print(f"\n[TTSOffline] New Speak Request (Offline): {text[:50]}...")
+        self._request_queue.put((text, voice_id))
 
     def stop(self):
-        if self._process and self._process.is_alive():
-            self._process.terminate()
-            self._process.join()
-            print("[OfflineTTS] Playback stopped.")
+        """Standardized stop call."""
+        if self.player:
+            self.player.stop()
+
+    def set_volume(self, volume):
+        print(f"[TTSOffline] Setting volume to: {volume*100:.0f}%")
+        self.player.set_volume(volume)

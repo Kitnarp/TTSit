@@ -12,3 +12,7 @@ class TTSBase(ABC):
     def stop(self):
         """Stop playback immediately."""
         pass
+
+    @abstractmethod
+    def set_volume(self, value):
+        pass
