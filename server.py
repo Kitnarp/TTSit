@@ -1,67 +1,75 @@
-import logging
 from fastapi import FastAPI, Body, HTTPException
 from core.TTSManager import TTSManager
+from core.logging_config import setup_logging
+import logging
 
-# Configure logging at startup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+# 1. Setup professional logging immediately
+setup_logging()
 logger = logging.getLogger("TTS.Server")
 
 app = FastAPI(title="Edge-TTS & Pyttsx3 Background Service")
-manager = TTSManager() # Now using the smart dynamic manager
+
+try:
+    manager = TTSManager()
+
+except Exception as e:
+    logger.critical(f"Failed to initialize TTSManager: {e}")
+    raise
 
 @app.post("/speak")
 def speak(payload: dict = Body(...)):
-    """
-    Directly triggers a speech request.
-    Example JSON:
-    {
-        "text": "Hello world",
-        "voice": "male_en",
-        "volume": 0.8,
-        "engine": "online"
-    }
-    """
     text = payload.get("text")
     if not text:
+        logger.warning("Received /speak request with no text.")
         raise HTTPException(status_code=400, detail="Text payload is required")
 
-    logger.info(f"POST /speak received: {text[:30]}...")
+    # Log incoming request details for debugging
+    engine = payload.get("engine", "default")
+    voice = payload.get("voice", "default")
+    logger.debug("========================= Speak Requested =========================")
     
-    # We unpack the dictionary directly into the manager's speak method
-    # It will use defaults for any missing keys
-    manager.speak(**payload)
-    
-    return {"status": "request_sent", "payload": payload}
+    try:
+        manager.speak(**payload)
+        return {"status": "request_sent", "payload": payload}
+    except Exception as e:
+        # This captures the full traceback in your log file!
+        logger.exception("Error occurred during manager.speak")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/stop")
 def stop():
-    """Immediately stops any current speech across all engines."""
-    logger.info("POST /stop received.")
+    logger.info("Global stop requested via API.")
     manager.stop()
     return {"status": "stopped"}
 
 @app.post("/volume")
 def set_volume(payload: dict = Body(...)):
-    """
-    Updates the system volume on the fly.
-    Example JSON: {"volume": 0.5}
-    """
     vol = payload.get("volume")
-    if vol is None or not (0.0 <= float(vol) <= 1.0):
-        raise HTTPException(status_code=400, detail="Volume must be between 0.0 and 1.0")
+    if vol is None:
+        logger.warning("Volume request missing 'volume' key.")
+        raise HTTPException(status_code=400, detail="Missing volume key")
     
-    manager.set_volume(float(vol))
-    return {"status": "volume_updated", "new_volume": vol}
+    try:
+        vol_float = float(vol)
+        if not (0.0 <= vol_float <= 1.0):
+            raise ValueError("Out of range")
+            
+        manager.set_volume(vol_float)
+        logger.info(f"Volume updated to: {vol_float}")
+        return {"status": "volume_updated", "new_volume": vol_float}
+    except ValueError:
+        logger.error(f"Invalid volume value received: {vol}")
+        raise HTTPException(status_code=400, detail="Volume must be a float between 0.0 and 1.0")
 
 @app.get("/status")
 def get_status():
-    """Returns the current default settings and system state."""
+    logger.debug("Status check requested.")
     return {
         "defaults": manager.defaults,
-        "system": "online"
+        "system_ready": True
     }
 
 if __name__ == "__main__":
     import uvicorn
-    # Running uvicorn directly for easy testing
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    logger.info("Starting Uvicorn server on port 8000...")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None) # Use our custom config

@@ -5,9 +5,10 @@ global pythonExe := "python"
 global cliScript := "tts_cli.py"
 global currentVol := 0.8
 
-; Voice Cycling Setup
+; Voice & Engine State
 global voiceList := ["female_en", "male_en", "male_in", "female_jp", "female_cn"]
 global voiceIndex := 1 
+global currentEngine := "online" ; Default engine
 ; ----------------
 
 ; Ctrl + Shift + S: Speak Clipboard
@@ -19,9 +20,18 @@ global voiceIndex := 1
     cleanText := StrReplace(clip, '"', "'")
     currentVoice := voiceList[voiceIndex]
     
-    ; Include the --voice flag in the command
-    cmd := pythonExe . ' "' . cliScript . '" --text "' . cleanText . '" --volume ' . currentVol . ' --voice "' . currentVoice . '"'
+    ; Pass both --voice and --engine to the CLI
+    cmd := pythonExe . ' "' . cliScript . '" --text "' . cleanText . '" --volume ' . currentVol . ' --voice "' . currentVoice . '" --engine "' . currentEngine . '"'
     Run(cmd, , "Hide")
+}
+
+; Ctrl + Shift + E: Toggle Engine (Online <-> Offline)
+^+e:: {
+    global currentEngine
+    currentEngine := (currentEngine == "online") ? "offline" : "online"
+    
+    ToolTip("Engine Switched to: " . StrUpper(currentEngine))
+    SetTimer(() => ToolTip(), -1500)
 }
 
 ; Ctrl + Shift + V: Cycle Voice
@@ -34,7 +44,7 @@ global voiceIndex := 1
     SetTimer(() => ToolTip(), -1500)
 }
 
-; Ctrl + Shift + Up/Down: Volume (Keeping previous logic)
+; --- Volume Controls ---
 ^+Up::   { 
     global currentVol
     currentVol := Round(Min(1.0, currentVol + 0.1), 1)
