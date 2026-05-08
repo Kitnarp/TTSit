@@ -40,38 +40,33 @@ class TTSOffline(TTSBase):
     def _offline_worker(self):
         while True:
             text, voice_id, sid = self._request_queue.get()
-            
-            # 1. Pre-synthesis check
             if sid != self.player._current_session:
-                self._request_queue.task_done()
-                continue
+                self._request_queue.task_done(); continue
 
             temp_path = None
             try:
+                # 1. Fresh synthesis
                 engine = pyttsx3.init()
                 engine.setProperty('rate', 170)
-                if voice_id:
-                    engine.setProperty("voice", voice_id)
+                if voice_id: engine.setProperty("voice", voice_id)
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                     temp_path = tmp.name
 
-                logger.info("[%d] Synthesizing offline: '%s...'", sid, text[:40].strip())
                 engine.save_to_file(text, temp_path)
                 engine.runAndWait() 
-                engine.stop()
+                engine.stop() # Ensure COM is released
                 del engine 
 
-                # 2. Post-synthesis check: Ensure user hasn't requested a new speak during synthesis
+                # 2. Check if we were interrupted DURING synthesis
                 if sid == self.player._current_session and os.path.exists(temp_path):
-                    # Read the generated WAV file
                     data, samplerate = sf.read(temp_path, dtype='int16')
                     
-                    # 3. Use play_numpy from the rolled-back AudioManager
-                    # This method handles the session validation and async feeding
+                    # 3. Hand over to the player. 
+                    # The player handles its own internal async feeding.
                     self.player.play_numpy(data, samplerate, sid)
                 else:
-                    logger.debug("[%d] Discarding synthesis: session no longer active.", sid)
+                    logger.debug("[%d] Synthesis finished but session is stale. Discarding.", sid)
 
             except Exception:
                 logger.exception("[%d] Offline synthesis failed", sid)
@@ -80,6 +75,7 @@ class TTSOffline(TTSBase):
                     try: os.remove(temp_path)
                     except: pass
                 self._request_queue.task_done()
+
 
     def speak(self, text, voice=None):
         if not text: return

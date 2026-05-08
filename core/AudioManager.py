@@ -96,24 +96,39 @@ class AudioManager:
                 self._stream.start()
 
     def play_numpy(self, data, samplerate, session_id):
+        """Offline playback respecting the provided session_id."""
         with self._lock:
             if session_id != self._current_session: return
             self._cleanup_resources()
+            
             if data.dtype != np.int16:
                 data = (data * 32767).astype(np.int16)
+            
             self._start_playback_engine(samplerate)
 
         def _feeder():
             block_size = 1024
             for i in range(0, len(data), block_size):
+                # If a new request arrives, this thread dies immediately
                 if session_id != self._current_session: return
+                
                 chunk = data[i:i+block_size]
                 if len(chunk) < block_size:
                     chunk = np.pad(chunk, (0, block_size - len(chunk)))
                 self._audio_queue.put(chunk)
+            
+            # Wait for hardware to finish playing
             self._block_until_done(session_id)
-        threading.Thread(target=_feeder, daemon=True).start()
+            
+            # CRITICAL: Do NOT call self.stop() here. 
+            # Only clean up local resources if we are still the active session.
+            with self._lock:
+                if session_id == self._current_session:
+                    # We don't call self._cleanup_resources() because that kills the stream.
+                    # We just let it idle.
+                    logger.debug("[%d] Offline feeder finished.", session_id)
 
+        threading.Thread(target=_feeder, daemon=True).start()
     async def play_stream(self, async_gen, session_id, samplerate=24000):
         with self._lock:
             if session_id != self._current_session: return
