@@ -26,7 +26,7 @@ def speak(payload: dict = Body(...)):
     # Log incoming request details for debugging
     engine = payload.get("engine", "default")
     voice = payload.get("voice", "default")
-    logger.debug("========================= Speak Requested =========================")
+    logger.info("========================= Speak Requested =========================")
     
     try:
         manager.speak(**payload)

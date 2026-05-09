@@ -97,38 +97,59 @@ class AudioManager:
 
     def play_numpy(self, data, samplerate, session_id):
         """Offline playback respecting the provided session_id."""
+
         with self._lock:
-            if session_id != self._current_session: return
-            self._cleanup_resources()
-            
+            if session_id != self._current_session:
+                return
+
+            # IMPORTANT:
+            # Do NOT fully cleanup resources here.
+            # We only clear pending audio queue.
+            while not self._audio_queue.empty():
+                try:
+                    self._audio_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            # Ensure int16 PCM
             if data.dtype != np.int16:
                 data = (data * 32767).astype(np.int16)
-            
+
             self._start_playback_engine(samplerate)
 
         def _feeder():
             block_size = 1024
-            for i in range(0, len(data), block_size):
-                # If a new request arrives, this thread dies immediately
-                if session_id != self._current_session: return
-                
-                chunk = data[i:i+block_size]
-                if len(chunk) < block_size:
-                    chunk = np.pad(chunk, (0, block_size - len(chunk)))
-                self._audio_queue.put(chunk)
-            
-            # Wait for hardware to finish playing
-            self._block_until_done(session_id)
-            
-            # CRITICAL: Do NOT call self.stop() here. 
-            # Only clean up local resources if we are still the active session.
-            with self._lock:
-                if session_id == self._current_session:
-                    # We don't call self._cleanup_resources() because that kills the stream.
-                    # We just let it idle.
-                    logger.debug("[%d] Offline feeder finished.", session_id)
+
+            try:
+                for i in range(0, len(data), block_size):
+
+                    # Abort instantly if session changed
+                    if session_id != self._current_session:
+                        logger.debug("[%d] Playback interrupted.", session_id)
+                        return
+
+                    chunk = data[i:i + block_size]
+
+                    # Pad final chunk
+                    if len(chunk) < block_size:
+                        chunk = np.pad(
+                            chunk,
+                            (0, block_size - len(chunk)),
+                            mode='constant'
+                        )
+
+                    self._audio_queue.put(chunk)
+
+                # Wait until queue drains
+                self._block_until_done(session_id)
+
+                logger.debug("[%d] Offline playback fully completed.", session_id)
+
+            except Exception:
+                logger.exception("[%d] Offline feeder crashed.", session_id)
 
         threading.Thread(target=_feeder, daemon=True).start()
+
     async def play_stream(self, async_gen, session_id, samplerate=24000):
         with self._lock:
             if session_id != self._current_session: return
@@ -199,9 +220,35 @@ class AudioManager:
             await asyncio.sleep(0.1)
 
     def _block_until_done(self, sid):
-        timeout = 0
-        while not self._audio_queue.empty() and sid == self._current_session and timeout < 20:
-            time.sleep(0.1)
-            timeout += 1
-        with self._lock:
-            if sid == self._current_session: self._cleanup_resources()
+        """
+        Wait until:
+        1. queue becomes empty
+        2. hardware buffer likely drained
+
+        IMPORTANT:
+        Queue empty != audio finished.
+        """
+
+        # Wait for queue drain
+        while (
+            not self._audio_queue.empty()
+            and sid == self._current_session
+        ):
+            time.sleep(0.05)
+
+        # CRITICAL FIX:
+        # Give sounddevice / OS mixer / hardware
+        # time to fully drain remaining audio.
+
+        # 1024 frames @ 24kHz ~= 42ms per block
+        # Add generous safety margin.
+        drain_time = 0.35
+
+        elapsed = 0.0
+
+        while (
+            elapsed < drain_time
+            and sid == self._current_session
+        ):
+            time.sleep(0.05)
+            elapsed += 0.05
