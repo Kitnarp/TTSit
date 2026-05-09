@@ -3,7 +3,8 @@ from core.TTSManager import TTSManager
 from core.logging.logging_config import setup_logging
 import logging
 
-# 1. Setup professional logging immediately
+# TODO: Wrap the server in windows service so there isn't a console in the taskbar all the time
+
 setup_logging()
 logger = logging.getLogger("TTS.Server")
 
@@ -23,10 +24,7 @@ def speak(payload: dict = Body(...)):
         logger.warning("Received /speak request with no text.")
         raise HTTPException(status_code=400, detail="Text payload is required")
 
-    # Log incoming request details for debugging
-    engine = payload.get("engine", "default")
-    voice = payload.get("voice", "default")
-    logger.info("========================= Speak Requested =========================")
+    logger.debug("Server received speak request...")
     
     try:
         manager.speak(**payload)

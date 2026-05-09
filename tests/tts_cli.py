@@ -32,7 +32,6 @@ def main():
             payload = {
                 "text": args.text,
                 "engine": args.engine,
-                "volume": args.volume or 0.8
             }
             if args.voice:
                 payload["voice"] = args.voice

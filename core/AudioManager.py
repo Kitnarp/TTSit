@@ -6,16 +6,23 @@ import threading
 import queue
 import logging
 import time
+import json
+import os
+from typing import Optional
 
 from core.logging.session_logger import SessionLogger
 
 logger = SessionLogger(logging.getLogger(__name__))
 
 
+
 class AudioManager:
-    def __init__(self, device=None):
-        self.device_id = device
-        self.volume = 1.0
+    def __init__(self, device=None, config_path: str = "core/config.json"):
+        # Use provided device, otherwise pull from config
+        config = self._load_default_audio_config(config_path)
+        self.device_id = device if device is not None else config.get("device")
+        self.volume = config.get("volume") if config is not None else 1.0
+
         self._audio_queue = queue.Queue(maxsize=1000)
         self.process = None
         self._stream = None
@@ -25,11 +32,23 @@ class AudioManager:
         logger.info("AudioManager initialized")
         logger.debug("device=%s volume=%.2f", self.device_id, self.volume)
 
+    def _load_default_audio_config(self, path: str) -> Optional[int]:
+        """Reads default device ID from JSON config."""
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return json.load(f).get("audio")
+            except Exception as e:
+                logger.error("Failed to load config file | %s", str(e))
+        return None
+
     # -----------------------------
     # Session control
     # -----------------------------
     def set_volume(self, volume: float):
         with self._lock:
+            if volume is None:
+                return
             self.volume = max(0.0, min(1.0, volume))
             logger.info("Volume updated -> %.2f", self.volume)
 
@@ -115,7 +134,7 @@ class AudioManager:
             if self._stream:
                 return
 
-            logger.debug("Starting playback engine | sr=%d", samplerate)
+            logger.debug("Starting playback engine | sr=%f", samplerate)
 
             self._stream = sd.OutputStream(
                 samplerate=samplerate,
@@ -137,7 +156,7 @@ class AudioManager:
                 return
 
             logger.set_sid(session_id)
-            logger.info("Playing offline started...")
+            logger.info(f"Starting offline playback | volume {self.volume}" )
 
             while not self._audio_queue.empty():
                 try:
@@ -188,7 +207,8 @@ class AudioManager:
                 return
 
             logger.set_sid(session_id)
-            logger.info("Starting stream playback")
+            logger.info(f"Starting online playback | volume {self.volume}" )
+
 
             self._cleanup_resources()
 

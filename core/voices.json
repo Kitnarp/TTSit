@@ -1,38 +1,81 @@
 {
-  "voices": 
-  {
-    "male_en": {
-      "display": "English (US) - Male",
-      "gender": "male",
-      "online": "en-US-GuyNeural"
-    },
-    "female_en": {
-      "display": "English (US) - Female",
-      "gender": "female",
-      "online": "en-US-AriaNeural"
-    },
-    "male_in": {
-      "display": "Male Indian English",
-      "gender": "male",
-      "online": "en-IN-PrabhatNeural"
-    },
-    "male_cn": {
-      "display": "Chinese (Mandarin) - Male",
-      "gender": "male",
-      "online": "zh-CN-YunxiNeural"
-    },
-    "female_cn": {
-      "display": "Chinese (Mandarin) - Female",
-      "gender": "female",
-      "online": "zh-CN-XiaoxiaoNeural"
-    },
-    "female_jp": {
-      "display": "Female Japanese",
-      "gender": "female",
-      "online": "ja-JP-NanamiNeural"
-    }
+"voices": {
+  "male_in_expressive": {
+    "display": "India - Male (Prabhat) - Very Natural",
+    "gender": "male",
+    "online": "en-IN-PrabhatNeural"
   },
-
+  "female_in_soft": {
+    "display": "India - Female (Neerja)",
+    "gender": "female",
+    "online": "en-IN-NeerjaNeural"
+  },
+  "male_fr_deep": {
+    "display": "France - Male (Henri) - Sophisticated",
+    "gender": "male",
+    "online": "fr-FR-HenriNeural"
+  },
+  "female_fr_clear": {
+    "display": "France - Female (Denise)",
+    "gender": "female",
+    "online": "fr-FR-DeniseNeural"
+  },
+  "female_ca_fr": {
+    "display": "Canada - Female (Sylvie) - Quebecois Accent",
+    "gender": "female",
+    "online": "fr-CA-SylvieNeural"
+  },
+  "male_ke_en": {
+    "display": "Kenya - Male (Chilemba) - East African Accent",
+    "gender": "male",
+    "online": "en-KE-ChilembaNeural"
+  },
+  "female_ng_en": {
+    "display": "Nigeria - Female (Abebi) - West African Accent",
+    "gender": "female",
+    "online": "en-NG-AbebiNeural"
+  },
+  "female_hk_en": {
+    "display": "Hong Kong - Female (Yan) - Cantopop Inflection",
+    "gender": "female",
+    "online": "en-HK-YanNeural"
+  },
+  "male_za_en": {
+    "display": "South Africa - Male (Luke) - Clear SA Accent",
+    "gender": "male",
+    "online": "en-ZA-LukeNeural"
+  },
+  "female_br_pt": {
+    "display": "Brazil - Female (Francisca) - Highly Rhythmic",
+    "gender": "female",
+    "online": "pt-BR-FranciscaNeural"
+  },
+    "female_en_excited": {
+    "display": "English (US) - Mia (High Energy)",
+    "gender": "female",
+    "online": "en-US-MiaNeural"
+  },
+  "female_en_atlas": {
+    "display": "English (US) - Atlas (Upbeat)",
+    "gender": "female",
+    "online": "en-US-AtlasNeural"
+  },
+  "male_en_stefan": {
+    "display": "English (US) - Steffan (Expressive)",
+    "gender": "male",
+    "online": "en-US-SteffanNeural"
+  },
+  "female_cn_xiaoxiao": {
+    "display": "Chinese - Xiaoxiao (Highly Animated)",
+    "gender": "female",
+    "online": "zh-CN-XiaoxiaoNeural"
+  },
+  "male_hk_sam": {
+    "display": "Hong Kong - Sam (Distinct Inflection)",
+    "gender": "male",
+    "online": "en-HK-SamNeural"
+  }
+},
   "offline_defaults": {
     "male": 1,
     "female": 2

@@ -40,7 +40,6 @@ class TTSManager:
         self.defaults = {
             "engine": "online",
             "voice": "female_en",
-            "volume": 0.8,
             "device": None
         }
 
@@ -51,6 +50,7 @@ class TTSManager:
     # Speak pipeline
     # -----------------------------
     def speak(self, text: str, **kwargs):
+        logger.info("---------------------------------- Speaking ----------------------------------")
         if not text:
             logger.debug("Empty speak request ignored.")
             return
@@ -59,10 +59,9 @@ class TTSManager:
 
         # INFO: high-level trace of request
         logger.info(
-            "Speak request | engine=%s voice=%s volume=%.2f \n" +  _format_tts_block(text),
+            "Speak request | engine=%s voice=%s \n" +  _format_tts_block(text),
             ctx["engine"],
             ctx["voice"],
-            ctx["volume"],
         )
 
         logger.debug("Merged context: %s", ctx)
@@ -73,10 +72,6 @@ class TTSManager:
             # -----------------------------
             # Audio configuration
             # -----------------------------
-            volume = ctx.get("volume", 0.8)
-            audio.set_volume(volume)
-            logger.debug("Audio volume set to %.2f", volume)
-
             if ctx.get("device") is not None:
                 logger.debug("Audio device override: %s", ctx["device"])
                 audio.set_device(ctx["device"])

@@ -1,0 +1,15 @@
+male_in_expressive
+female_in_soft
+male_fr_deep
+female_fr_clear
+female_ca_fr
+male_ke_en
+female_ng_en
+female_hk_en
+male_za_en
+female_br_pt
+female_en_excited
+female_en_atlas
+male_en_stefan
+female_cn_xiaoxiao
+male_hk_sam

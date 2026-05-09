@@ -42,6 +42,8 @@ class VoiceRegistry:
             self._voices = data.get("voices", {})
             self._offline_defaults = data.get("offline_defaults", {})
 
+            self._export_keys()
+
             logger.info("VoiceRegistry loaded | voices=%d offline_defaults=%d", len(self._voices), len(self._offline_defaults))
             logger.debug("Voice keys: %s", list(self._voices.keys()))
             logger.debug("Offline defaults: %s", self._offline_defaults)
@@ -55,6 +57,28 @@ class VoiceRegistry:
         except Exception:
             logger.exception("Unexpected VoiceRegistry load failure")
             self._voices, self._offline_defaults = {}, {}
+
+    def _export_keys(self):
+        """Writes current voice keys to a shared text file safely."""
+        target_path = "active_voices.txt"
+        temp_path = target_path + ".tmp"
+
+        try:
+            # 1. Get the keys and join with newlines
+            keys_str = "\n".join(self._voices.keys())
+            
+            # 2. Write to a temporary file first
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write(keys_str)
+                
+            # 3. Atomically rename/replace the file
+            # This ensures AHK/C++ never sees a 'partial' file
+            os.replace(temp_path, target_path)
+            logger.debug("Exported %d keys to %s", len(self._voices), target_path)
+            
+        except Exception as e:
+            logger.error("Failed to export voice keys: %s", e)
+
 
     def reload(self):
         logger.info("Reloading VoiceRegistry")
@@ -77,6 +101,8 @@ class VoiceRegistry:
             resolved = voice.get("online")
             if resolved:
                 logger.debug("Online voice resolved | key=%s voice_id=%s", voice_key, resolved)
+                voicetype = voice.get("display")
+                if voicetype: logger.info(f"Voice: {voicetype}.")
                 return resolved
             logger.warning("Online voice mapping missing | voice_key=%s", voice_key)
             return None
