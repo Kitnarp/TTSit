@@ -1,4 +1,6 @@
-﻿#Requires AutoHotkey v2.0
+﻿; tests/Post_request.ahk
+
+#Requires AutoHotkey v2.0
 
 ; --- SETTINGS ---
 global pythonExe := "python"
@@ -10,6 +12,14 @@ global voiceList := ["female_en", "male_en", "male_in", "female_jp", "female_cn"
 global voiceIndex := 1 
 global currentEngine := "online" ; Default engine
 ; ----------------
+
+; Ctrl + Shift + X: Stop Playback (NEW)
+^+x:: {
+    cmd := pythonExe . ' "' . cliScript . '" --stop'
+    Run(cmd, , "Hide")
+    ToolTip("TTS Stopped")
+    SetTimer(() => ToolTip(), -1000)
+}
 
 ; Ctrl + Shift + S: Speak Clipboard
 ^+s:: {

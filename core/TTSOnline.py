@@ -3,102 +3,172 @@ import threading
 import edge_tts
 import time
 import logging
+
+from core.logging.session_logger import SessionLogger
 from core.TTSBase import TTSBase
 
-logger = logging.getLogger(__name__)
+base_logger = logging.getLogger(__name__)
+logger = SessionLogger(base_logger)
+
 
 class TTSOnline(TTSBase):
-    VOICE_MAP = {
-        "female_en": "en-US-AriaNeural",
-        "male_en": "en-US-AndrewNeural",
-        "male_in": "en-IN-PrabhatNeural",
-        "female_jp": "ja-JP-NanamiNeural",
-        "male_jp": "ja-JP-KeitaNeural",
-        "female_cn": "zh-CN-XiaoxiaoNeural",
-    }
-
-    def __init__(self, player, default_voice="female_en"):
+    def __init__(self, player):
         super().__init__()
+
         self.player = player
-        self.default_voice = default_voice if default_voice in self.VOICE_MAP else "female_en"
-        
+
         self._current_task = None
         self._lock = threading.Lock()
-        
-        self._loop = None
-        self._worker_thread = threading.Thread(target=self._run_worker, daemon=True)
-        self._worker_thread.start()
-        logger.info("Online Engine (FFmpeg-Stream) initialized.")
 
+        self._loop = None
+        self._worker_thread = threading.Thread(
+            target=self._run_worker,
+            daemon=True
+        )
+        self._worker_thread.start()
+
+        logger.info("TTSOnline engine initialized (Edge-TTS ready).")
+        logger.debug("Worker thread started: %s", self._worker_thread.name)
+
+    # -----------------------------
+    # Async loop
+    # -----------------------------
     def _run_worker(self):
-        """Dedicated background loop for network and synthesis."""
+        logger.debug("Async event loop starting")
+
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+
+        logger.debug("Async event loop running")
         self._loop.run_forever()
 
-    def _resolve_voice(self, voice_key: str) -> str:
-        return self.VOICE_MAP.get(voice_key, self.VOICE_MAP.get(self.default_voice, "en-US-AriaNeural"))
+    # -----------------------------
+    # Public API
+    # -----------------------------
+    def speak(self, text: str, voice_id: str):
+        if not text:
+            logger.debug("Empty text ignored in speak()")
+            return
 
-    def speak(self, text: str, voice: str = None):
-        """Entry point for new speech requests."""
-        if not text: return
-        
+        if not voice_id:
+            logger.error("Speak request rejected: missing voice_id")
+            return
+
         with self._lock:
-            # 1. Increment session ID and abort current hardware playback
-            target_sid = self.player.stop()
+            sid = self.player.stop()
 
-            # 2. Cancel the previous async task immediately
+            # 🔥 bind session globally
+            logger.set_sid(sid)
+
+            logger.info("Speaking started (voice=%s)", voice_id)
+            logger.debug("Text length: %d characters", len(text))
+
+            # cancel previous task
             if self._current_task and not self._current_task.done():
-                # We use a lambda to ensure the cancel call happens on the worker loop
-                self._loop.call_soon_threadsafe(lambda: self._current_task.cancel())
+                logger.debug("Cancelling previous TTS task")
 
-            # 3. Schedule the new speech coroutine
+                self._loop.call_soon_threadsafe(
+                    lambda: self._current_task.cancel()
+                )
+
             if self._loop and self._loop.is_running():
-                logger.info("[%d] New Speak Request: '%s...'", target_sid, text[:40].strip())
-                coro = self._async_speak(text, voice, target_sid)
-                self._current_task = asyncio.run_coroutine_threadsafe(coro, self._loop)
-            else:
-                logger.error("Async worker loop is not running.")
+                logger.debug("Scheduling async Edge-TTS task")
 
-    async def _async_speak(self, text: str, voice: str, session_id: int):
-        """Async internal logic for streaming from EdgeTTS."""
-        edge_voice = self._resolve_voice(voice)
+                coro = self._async_speak(text, voice_id, sid)
+
+                self._current_task = asyncio.run_coroutine_threadsafe(
+                    coro,
+                    self._loop
+                )
+
+            else:
+                logger.error("Async loop not running — cannot speak")
+
+    # -----------------------------
+    # Core streaming
+    # -----------------------------
+    async def _async_speak(self, text: str, voice_id: str, session_id: int):
         start_time = time.perf_counter()
-        
+
+        # ensure session is bound inside async thread too
+        logger.set_sid(session_id)
+
+        logger.info("Generating speech audio...")
+
         try:
-            communicate = edge_tts.Communicate(text, voice=edge_voice)
-            
+            communicate = edge_tts.Communicate(text, voice=voice_id)
+
             async def byte_generator():
-                """Feeds chunks to the player; aborts instantly if session changes."""
                 first_chunk = True
+                chunk_count = 0
+
+                logger.debug("Connecting to Edge-TTS stream")
+
                 async for chunk in communicate.stream():
-                    # CRITICAL: Stop requesting data from web if a new speak() arrived
+
                     if session_id != self.player._current_session:
-                        logger.debug("[%d] Aborting network stream: session stale.", session_id)
+                        logger.info("Speech interrupted (new request received)")
                         return
-                        
+
                     if chunk["type"] == "audio":
+
+                        chunk_count += 1
+
                         if first_chunk:
                             latency = (time.perf_counter() - start_time) * 1000
-                            logger.debug("[%d] First chunk latency: %.2fms", session_id, latency)
+
+                            logger.info(
+                                "Audio streaming started (latency=%.0fms)",
+                                latency
+                            )
+
                             first_chunk = False
+
+                        if chunk_count % 25 == 0:
+                            logger.debug("Streaming audio chunks: %d", chunk_count)
+
                         yield chunk["data"]
 
-            # Hand off to the session-aware player
-            await self.player.play_stream(byte_generator(), session_id=session_id, samplerate=24000)
-                
-        except asyncio.CancelledError:
-            logger.debug("[%d] Async speak task cancelled.", session_id)
-        except Exception:
-            logger.exception("[%d] TTSOnline Error", session_id)
+                logger.debug(
+                    "Edge-TTS stream completed (%d chunks)",
+                    chunk_count
+                )
 
+            await self.player.play_stream(
+                byte_generator(),
+                session_id=session_id,
+                samplerate=24000
+            )
+
+            logger.info("Speech playback completed")
+
+        except asyncio.CancelledError:
+            logger.info("Speech cancelled")
+
+        except Exception:
+            logger.exception("TTSOnline error during synthesis")
+
+        finally:
+            # 🔥 critical cleanup
+            logger.clear_sid()
+
+    # -----------------------------
+    # Control
+    # -----------------------------
     def stop(self):
-        """Stops the current task and the player."""
         with self._lock:
+            logger.info("Stopping TTSOnline playback")
+
             if self._current_task and not self._current_task.done():
-                self._loop.call_soon_threadsafe(lambda: self._current_task.cancel())
+                logger.debug("Cancelling active async task")
+                self._loop.call_soon_threadsafe(
+                    lambda: self._current_task.cancel()
+                )
+
             self.player.stop()
 
+            logger.clear_sid()
+
     def set_volume(self, volume: float):
-        """Implements abstract method from TTSBase."""
+        logger.info("Volume changed: %.2f", volume)
         self.player.set_volume(volume)

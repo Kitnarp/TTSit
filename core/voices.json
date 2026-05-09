@@ -1,0 +1,40 @@
+{
+  "voices": 
+  {
+    "male_en": {
+      "display": "English (US) - Male",
+      "gender": "male",
+      "online": "en-US-GuyNeural"
+    },
+    "female_en": {
+      "display": "English (US) - Female",
+      "gender": "female",
+      "online": "en-US-AriaNeural"
+    },
+    "male_in": {
+      "display": "Male Indian English",
+      "gender": "male",
+      "online": "en-IN-PrabhatNeural"
+    },
+    "male_cn": {
+      "display": "Chinese (Mandarin) - Male",
+      "gender": "male",
+      "online": "zh-CN-YunxiNeural"
+    },
+    "female_cn": {
+      "display": "Chinese (Mandarin) - Female",
+      "gender": "female",
+      "online": "zh-CN-XiaoxiaoNeural"
+    },
+    "female_jp": {
+      "display": "Female Japanese",
+      "gender": "female",
+      "online": "ja-JP-NanamiNeural"
+    }
+  },
+
+  "offline_defaults": {
+    "male": 1,
+    "female": 2
+  }
+}

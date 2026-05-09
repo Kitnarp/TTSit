@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Body, HTTPException
 from core.TTSManager import TTSManager
-from core.logging_config import setup_logging
+from core.logging.logging_config import setup_logging
 import logging
 
 # 1. Setup professional logging immediately
@@ -55,7 +55,7 @@ def set_volume(payload: dict = Body(...)):
             raise ValueError("Out of range")
             
         manager.set_volume(vol_float)
-        logger.info(f"Volume updated to: {vol_float}")
+        logger.debug(f"Volume updated to: {vol_float}")
         return {"status": "volume_updated", "new_volume": vol_float}
     except ValueError:
         logger.error(f"Invalid volume value received: {vol}")

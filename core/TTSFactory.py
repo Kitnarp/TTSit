@@ -1,64 +1,97 @@
 import logging
-import socket
-from core.logging_config import setup_logging
+from core.logging.session_logger import SessionLogger
 
-# Use the module path for the logger name
-logger = logging.getLogger(__name__)
+
+base_logger = logging.getLogger(__name__)
+logger = SessionLogger(base_logger)
+
 
 class TTSFactory:
-    _instances = {}  # Stores singletons: {'online': <TTSOnline>, 'offline': <TTSOffline>}
-    _audio_manager = None  # The SINGLE source of truth
+    """
+    Factory is ONLY responsible for:
+    - creating engines
+    - caching instances
+    - providing shared dependencies (AudioManager)
 
+    It does NOT decide:
+    - online/offline fallback
+    - voice selection
+    - connectivity logic
+    """
+
+    _engines = {}
+    _audio_manager = None
+
+    # -----------------------------
+    # Shared dependency
+    # -----------------------------
     @classmethod
     def get_audio_manager(cls):
         if cls._audio_manager is None:
             try:
                 from core.AudioManager import AudioManager
                 cls._audio_manager = AudioManager()
+                logger.info("AudioManager initialized.")
             except Exception:
                 logger.exception("Failed to initialize AudioManager.")
                 raise
+
         return cls._audio_manager
 
+    # -----------------------------
+    # Engine registry (clean mapping)
+    # -----------------------------
+    _engine_map = {
+        "online": "core.TTSOnline.TTSOnline",
+        "offline": "core.TTSOffline.TTSOffline",
+    }
+
+    # -----------------------------
+    # Engine factory
+    # -----------------------------
     @classmethod
-    def get_engine(cls, engine_type="online"):
-        # 1. Connectivity Check for Online Engine
-        if engine_type == "online":
-            if not cls._is_internet_available():
-                logger.warning("No internet connection detected. Falling back to 'offline' engine.")
-                engine_type = "offline"
+    def get_engine(cls, engine_type: str = "online"):
+        """
+        Returns cached or newly created engine instance.
+        """
 
-        # 2. Get shared AudioManager
-        manager = cls.get_audio_manager()
+        # already created → reuse
+        if engine_type in cls._engines:
+            return cls._engines[engine_type]
 
-        # 3. Return existing instance if already created (Cached)
-        if engine_type in cls._instances:
-            logger.debug("Returning cached %s engine instance.", engine_type)
-            return cls._instances[engine_type]
+        # invalid engine safeguard
+        if engine_type not in cls._engine_map:
+            logger.warning(
+                "Unknown engine '%s', falling back to 'offline'.",
+                engine_type
+            )
+            engine_type = "offline"
 
-        # 4. Lazy Loading: Create and store if not exists
-        logger.info("Lazy loading new %s engine instance...", engine_type)
         try:
-            if engine_type == "online":
-                from core.TTSOnline import TTSOnline
-                cls._instances["online"] = TTSOnline(player=manager)
-            else:
-                from core.TTSOffline import TTSOffline
-                cls._instances["offline"] = TTSOffline(player=manager)
-            
-            logger.info("%s engine successfully initialized.", engine_type.capitalize())
+            module_path, class_name = cls._engine_map[engine_type].rsplit(".", 1)
+
+            module = __import__(module_path, fromlist=[class_name])
+            engine_class = getattr(module, class_name)
+
+            instance = engine_class(
+                player=cls.get_audio_manager()
+            )
+
+            cls._engines[engine_type] = instance
+
+            logger.info("%s engine initialized.", engine_type)
+
+            return instance
+
         except Exception:
-            logger.exception("Failed to initialize %s engine.", engine_type)
+            logger.exception("Failed to initialize engine: %s", engine_type)
             raise
 
-        return cls._instances[engine_type]
-
-    @staticmethod
-    def _is_internet_available():
-        """Checks connectivity to Google DNS with a 2-second timeout."""
-        try:
-            # socket.create_connection is a blocking call; logger.debug tracks it
-            socket.create_connection(("8.8.8.8", 53), timeout=2)
-            return True
-        except OSError:
-            return False
+    # -----------------------------
+    # Utility
+    # -----------------------------
+    @classmethod
+    def reset(cls):
+        """Optional: full reset for debugging/testing."""
+        cls._engines.clear()
+        cls._audio_manager = None

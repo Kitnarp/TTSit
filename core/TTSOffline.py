@@ -5,90 +5,157 @@ import tempfile
 import soundfile as sf
 import queue
 import logging
+
+from core.logging.session_logger import SessionLogger
 from core.TTSBase import TTSBase
 
-logger = logging.getLogger(__name__)
+base_logger = logging.getLogger(__name__)
+logger = SessionLogger(base_logger)
+
 
 class TTSOffline(TTSBase):
-    def __init__(self, player, default_voice="female_en"):
+    """
+    Offline TTS engine (pyttsx3-based)
+    Session-aware via SessionLogger context binding
+    """
+
+    def __init__(self, player, default_voice_id=None):
         super().__init__()
+
         self.player = player
-        self.VOICE_MAP = {"female_en": "Zira", "male_en": "David"}
-        self.default_voice = default_voice
-        
-        self._voice_id_cache = {}
-        self._init_voice_cache()
-        
+        self.default_voice_id = default_voice_id
+
         self._request_queue = queue.Queue()
-        self._worker_thread = threading.Thread(target=self._offline_worker, daemon=True)
+
+        self._worker_thread = threading.Thread(
+            target=self._offline_worker,
+            daemon=True
+        )
         self._worker_thread.start()
-        logger.info("Offline Engine (FFmpeg-Compatible) initialized.")
 
-    def _init_voice_cache(self):
-        try:
-            engine = pyttsx3.init()
-            voices = engine.getProperty("voices")
-            for key, name_match in self.VOICE_MAP.items():
-                for v in voices:
-                    if name_match.lower() in v.name.lower():
-                        self._voice_id_cache[key] = v.id
-                        break
-            engine.stop()
-        except Exception:
-            logger.exception("Failed to cache system voices")
+        logger.info("Offline TTS engine ready.")
+        logger.debug(
+            "Engine initialized | default_voice=%s | thread=%s",
+            self.default_voice_id,
+            self._worker_thread.name
+        )
 
+    # -----------------------------
+    # Worker loop
+    # -----------------------------
     def _offline_worker(self):
+        logger.debug("Offline worker loop started.")
+
         while True:
             text, voice_id, sid = self._request_queue.get()
+
+            # Bind session to logging context
+            logger.set_sid(session_id=sid)
+
+            logger.debug(
+                "Job received | text_len=%d | voice_id=%s | active_session=%s",
+                len(text) if text else 0,
+                voice_id,
+                self.player._current_session
+            )
+
+            # session guard
             if sid != self.player._current_session:
-                self._request_queue.task_done(); continue
+                logger.debug("Stale job discarded (session mismatch)")
+                self._request_queue.task_done()
+                continue
 
             temp_path = None
+
             try:
-                # 1. Fresh synthesis
+                logger.info("Generating offline speech...")
+
                 engine = pyttsx3.init()
-                engine.setProperty('rate', 170)
-                if voice_id: engine.setProperty("voice", voice_id)
+                engine.setProperty("rate", 170)
+                engine_voices = engine.getProperty("voices")
+
+                if voice_id:
+                    logger.debug("Applying voice_id=%s", voice_id)
+                    engine.setProperty("voice", engine_voices[voice_id-1].id)
+                else:
+                    logger.debug("Using system default voice")
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                     temp_path = tmp.name
 
-                engine.save_to_file(text, temp_path)
-                engine.runAndWait() 
-                engine.stop() # Ensure COM is released
-                del engine 
+                logger.debug("Writing temp audio file")
 
-                # 2. Check if we were interrupted DURING synthesis
-                if sid == self.player._current_session and os.path.exists(temp_path):
-                    data, samplerate = sf.read(temp_path, dtype='int16')
-                    
-                    # 3. Hand over to the player. 
-                    # The player handles its own internal async feeding.
-                    self.player.play_numpy(data, samplerate, sid)
+                engine.save_to_file(text, temp_path)
+                engine.runAndWait()
+                engine.stop()
+                del engine
+
+                logger.debug("Synthesis completed")
+
+                # session validation before playback
+                if sid != self.player._current_session:
+                    logger.info("Discarding audio (new session started)")
+
+                elif not os.path.exists(temp_path):
+                    logger.error("Temp audio file missing: %s", temp_path)
+
                 else:
-                    logger.debug("[%d] Synthesis finished but session is stale. Discarding.", sid)
+                    logger.info("Playing offline speech...")
+
+                    data, samplerate = sf.read(temp_path, dtype="int16")
+
+                    logger.debug(
+                        "Audio loaded | sr=%d | frames=%d",
+                        samplerate,
+                        len(data)
+                    )
+
+                    self.player.play_numpy(data, samplerate, sid)
 
             except Exception:
-                logger.exception("[%d] Offline synthesis failed", sid)
+                logger.exception("Offline TTS failed")
+
             finally:
                 if temp_path and os.path.exists(temp_path):
-                    try: os.remove(temp_path)
-                    except: pass
+                    try:
+                        os.remove(temp_path)
+                        logger.debug("Temp file cleaned")
+                    except Exception:
+                        logger.warning("Failed to delete temp file")
+
                 self._request_queue.task_done()
 
+                # IMPORTANT: clear session context after job
+                logger.clear_sid()
 
-    def speak(self, text, voice=None):
-        if not text: return
+    # -----------------------------
+    # Public API
+    # -----------------------------
+    def speak(self, text: str, voice_id: str = None):
+        if not text:
+            logger.debug("Empty speak request ignored")
+            return
 
-        # Capture fresh session ID and stop any current audio
         sid = self.player.stop()
-        
-        voice_id = self._voice_id_cache.get(voice, self._voice_id_cache.get(self.default_voice))
-        self._request_queue.put((text, voice_id, sid))
+
+        # bind session globally for entire pipeline
+        logger.set_sid(session_id=sid)
+
+        final_voice = voice_id or self.default_voice_id
+
+        logger.info("Offline speak request queued")
+        logger.debug(
+            "Request params | voice=%s | text_len=%d",
+            final_voice,
+            len(text)
+        )
+
+        self._request_queue.put((text, final_voice, sid))
 
     def stop(self):
-        """Unified stop call."""
+        logger.info("Offline engine stop requested")
         self.player.stop()
 
     def set_volume(self, volume):
+        logger.debug("Volume update: %.2f", volume)
         self.player.set_volume(volume)
